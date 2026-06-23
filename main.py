@@ -34,10 +34,20 @@ async def run_master_pipeline():
         raise ValueError("❌ GOOGLE_API_KEY not found! Check your .env file.")
 
     # -----------------------------------------------------------------
-    # PHASE 1: REFRESH RSS DATA
+    # PHASE 1: CONCURRENTLY FETCH ALL DATA
     # -----------------------------------------------------------------
-    print("=== PHASE 1: FETCHING LIVE RSS FEEDS FROM GOOGLE ===")
-    await build_daily_news_context()
+    print("=== PHASE 1: FETCHING LIVE DATA SOURCES ===")
+    
+    weather_task = asyncio.to_thread(get_weather_context)
+    stocks_task = asyncio.to_thread(get_market_data)
+    news_task = build_daily_news_context()
+    
+    print("Simultaneously gathering RSS Feeds, Weather, and Stocks...")
+    _, weather_data, (llm_market_text, raw_stock_data) = await asyncio.gather(
+        news_task,
+        weather_task,
+        stocks_task
+    )
     print("====================================================\n")
 
     # -----------------------------------------------------------------
@@ -83,14 +93,8 @@ async def run_master_pipeline():
             title = article.get("title", "")
             context_lines.append(f"ID: {temp_id}\nContext: {title} - {desc}\n")
 
-    # Fetch and add weather data to context
-    print("Fetching weather context...")
-    weather_data = get_weather_context()
+    # We inject the data we fetched concurrently in Phase 1
     context_lines.append(f"\nRAW WEATHER DATA:\n{weather_data}")
-
-    # Fetch and add stock market data to context
-    print("Fetching stock market context...")
-    llm_market_text, raw_stock_data = get_market_data()
     context_lines.append(f"\nRAW STOCK DATA:\n{llm_market_text}")
 
     context_block = "\n".join(context_lines)
@@ -110,7 +114,8 @@ async def run_master_pipeline():
          "3. Bold all key names, teams, and numbers for instant scanning.\n"
          "4. Do NOT use conversational transitions.\n"
          "5. Read the 'RAW WEATHER DATA' and generate an engaging, reporter-style weather briefing.\n"
-         "6. Read the 'RAW STOCK DATA' and generate a brief, conversational market overview discussing the broader indices and how the specific watchlist stocks moved. Do not list out all the numbers mechanically; tell the story of the market day."
+         "6. Read the 'RAW STOCK DATA' and generate a brief, conversational market overview discussing the broader indices and how the specific watchlist stocks moved. Do not list out all the numbers mechanically; tell the story of the market day.\n"
+         "7. CRITICAL FORMATTING: You MUST explicitly bold (using **asterisks**) the names of ALL indices, ALL stock tickers/companies, and ALL numbers/percentages you mention in the market overview."
         ),
         ("human", "Process these stories:\n\n{context}")
     ])
@@ -119,39 +124,49 @@ async def run_master_pipeline():
 
     print("🚀 Sending ONE unified batch request to Gemini API (Bypassing Rate Limits)...")
 
-    try:
-        # One single API call processes everything!
-        result = await chain.ainvoke({"context": context_block})
-        
-        # Extract the new weather section
-        if result.weather_report:
-            final_frontend_data["weather"].append({
-                "summary": result.weather_report,
-                "url": "#"
-            })
+    MAX_RETRIES = 3
+    for attempt in range(MAX_RETRIES):
+        try:
+            # One single API call processes everything!
+            result = await chain.ainvoke({"context": context_block})
             
-        # Extract the new finance section
-        if result.market_overview and raw_stock_data:
-            final_frontend_data["finance"] = {
-                "overview": result.market_overview,
-                "stocks": raw_stock_data
-            }
-            
-        # Unpack the single massive list back into the correct sections
-        for item in result.items:
-            if item.id in url_mapping:
-                sec = url_mapping[item.id]["section"]
-                final_frontend_data[sec].append({
-                    "summary": item.summary,
-                    "url": url_mapping[item.id]["url"]
+            # Extract the new weather section
+            if result.weather_report:
+                final_frontend_data["weather"].append({
+                    "summary": result.weather_report,
+                    "url": "#"
+                })
+                
+            # Extract the new finance section
+            if result.market_overview and raw_stock_data:
+                final_frontend_data["finance"] = {
+                    "overview": result.market_overview,
+                    "stocks": raw_stock_data
+                }
+                
+            # Unpack the single massive list back into the correct sections
+            for item in result.items:
+                if item.id in url_mapping:
+                    sec = url_mapping[item.id]["section"]
+                    final_frontend_data[sec].append({
+                        "summary": item.summary,
+                        "url": url_mapping[item.id]["url"]
+                    })
+                    
+            # If parsing succeeds, break out of retry loop
+            break
+
+        except Exception as e:
+            print(f"❌ LLM Error on attempt {attempt + 1}/{MAX_RETRIES}: {e}")
+            if attempt == MAX_RETRIES - 1:
+                print("⚠️ Failed all retries. Generating safe fallback state.")
+                final_frontend_data["user_interest"].append({
+                    "summary": "Our AI reporter experienced technical difficulties compiling today's intelligence via Gemini. Please try refreshing.",
+                    "url": "#"
                 })
 
-        # Remove any empty sections if a feed failed
-        final_frontend_data = {k: v for k, v in final_frontend_data.items() if v}
-
-    except Exception as e:
-        print(f"❌ Error during batch generation: {e}")
-        return
+    # Remove any empty sections if a feed failed
+    final_frontend_data = {k: v for k, v in final_frontend_data.items() if v}
 
     # Save final frontend-optimized configuration
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:

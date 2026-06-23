@@ -1,0 +1,19 @@
+{
+  "weather": {
+    "location": "Connaught Place, Delhi, IN"
+  },
+  "finance": {
+    "indices": {
+      "^NSEI": "NIFTY 50",
+      "^BSESN": "BSE SENSEX",
+      "^NSEBANK": "NIFTY BANK"
+    },
+    "watchlist": [
+      "RELIANCE.NS",
+      "TCS.NS",
+      "HDFCBANK.NS",
+      "INFY.NS",
+      "ICICIBANK.NS"
+    ]
+  }
+}

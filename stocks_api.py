@@ -1,8 +1,18 @@
 import yfinance as yf
+import json
+import os
+
+def load_config():
+    try:
+        with open("config.json", "r", encoding="utf-8") as f:
+            return json.load(f).get("finance", {})
+    except Exception:
+        return {}
 
 def get_market_data():
-    watchlist = ["AAPL", "MSFT", "GOOGL", "AMZN", "TSLA"]
-    indices = {"^GSPC": "S&P 500", "^IXIC": "NASDAQ"}
+    config = load_config()
+    watchlist = config.get("watchlist", ["AAPL", "MSFT", "GOOGL", "AMZN", "TSLA"])
+    indices = config.get("indices", {"^GSPC": "S&P 500", "^IXIC": "NASDAQ"})
     
     llm_context_lines = []
     llm_context_lines.append("MARKET INDICES:")
@@ -13,10 +23,10 @@ def get_market_data():
     for symbol, name in indices.items():
         try:
             ticker = yf.Ticker(symbol)
-            hist = ticker.history(period="2d")
+            hist = ticker.history(period="5d").dropna()
             if len(hist) >= 1:
-                current = hist['Close'].iloc[-1]
-                prev = hist['Close'].iloc[0] if len(hist) > 1 else current
+                current = float(hist['Close'].iloc[-1])
+                prev = float(hist['Close'].iloc[-2]) if len(hist) > 1 else current
                 change_pct = ((current - prev) / prev) * 100
                 llm_context_lines.append(f"{name}: {current:.2f} ({change_pct:+.2f}%)")
         except Exception as e:
@@ -29,14 +39,14 @@ def get_market_data():
         try:
             ticker = yf.Ticker(symbol)
             # Fetch history for price, volume, day range
-            hist = ticker.history(period="2d")
+            hist = ticker.history(period="5d").dropna()
             if len(hist) >= 1:
-                current = hist['Close'].iloc[-1]
-                prev = hist['Close'].iloc[0] if len(hist) > 1 else current
+                current = float(hist['Close'].iloc[-1])
+                prev = float(hist['Close'].iloc[-2]) if len(hist) > 1 else current
                 change_pct = ((current - prev) / prev) * 100
-                volume = hist['Volume'].iloc[-1]
-                day_high = hist['High'].iloc[-1]
-                day_low = hist['Low'].iloc[-1]
+                volume = int(hist['Volume'].iloc[-1])
+                day_high = float(hist['High'].iloc[-1])
+                day_low = float(hist['Low'].iloc[-1])
                 
                 # Try to get 52 week data from info, fallback if missing
                 info = ticker.info
@@ -60,6 +70,9 @@ def get_market_data():
         except Exception as e:
             print(f"Error fetching {symbol}: {e}")
             
+    if not raw_frontend_data:
+        return "Market data temporarily unavailable.", []
+        
     return "\n".join(llm_context_lines), raw_frontend_data
 
 if __name__ == "__main__":

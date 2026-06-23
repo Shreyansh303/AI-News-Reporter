@@ -1,10 +1,20 @@
 import os
+import json
 import requests
 from dotenv import load_dotenv
 
-def get_weather_context(location="Patparganj, Delhi, IN"):
-    
+def load_config():
+    try:
+        with open("config.json", "r", encoding="utf-8") as f:
+            return json.load(f).get("weather", {})
+    except Exception:
+        return {}
+
+def get_weather_context():
     load_dotenv()
+    config = load_config()
+    location = config.get("location", "Patparganj, Delhi, IN")
+    
     api_key = os.getenv("OPENWEATHER_API_KEY")
     if not os.getenv("OPENWEATHER_API_KEY"):
         print("⚠️ No OPENWEATHER_API_KEY found, returning mock weather data.")
