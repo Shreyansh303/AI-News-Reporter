@@ -8,6 +8,8 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
 
 from news_google import build_daily_news_context
+from weather_api import get_weather_context
+from stocks_api import get_market_data
 
 
 
@@ -21,6 +23,8 @@ class ArticleSummary(BaseModel):
     summary: str = Field(description="The hyper-dense, detailed summary with bolded entities.")
 
 class MasterBriefing(BaseModel):
+    weather_report: str = Field(description="The engaging and informative weather briefing generated from the provided weather data.")
+    market_overview: str = Field(description="A brief, engaging conversational overview of the broader stock market trends and specific watchlist movements based on the provided RAW STOCK DATA.")
     items: List[ArticleSummary]
 
 
@@ -56,7 +60,10 @@ async def run_master_pipeline():
     # Initialize the mapping dictionaries
     url_mapping = {}
     context_lines = []
+    
+    # We add "weather" section to final_frontend_data so it renders on the UI
     final_frontend_data = {sec: [] for sec in sections}
+    final_frontend_data["weather"] = []
 
     print("Packing all 6 sections into a single context block...")
 
@@ -76,6 +83,16 @@ async def run_master_pipeline():
             title = article.get("title", "")
             context_lines.append(f"ID: {temp_id}\nContext: {title} - {desc}\n")
 
+    # Fetch and add weather data to context
+    print("Fetching weather context...")
+    weather_data = get_weather_context()
+    context_lines.append(f"\nRAW WEATHER DATA:\n{weather_data}")
+
+    # Fetch and add stock market data to context
+    print("Fetching stock market context...")
+    llm_market_text, raw_stock_data = get_market_data()
+    context_lines.append(f"\nRAW STOCK DATA:\n{llm_market_text}")
+
     context_block = "\n".join(context_lines)
 
     #Setup Gemini
@@ -91,7 +108,9 @@ async def run_master_pipeline():
          "1. For each provided article ID, write a comprehensive, high-density summary.\n"
          "2. Every summary must be hyper-dense, capturing specific scores, player names, company names, and numbers from the context.\n"
          "3. Bold all key names, teams, and numbers for instant scanning.\n"
-         "4. Do NOT use conversational transitions."
+         "4. Do NOT use conversational transitions.\n"
+         "5. Read the 'RAW WEATHER DATA' and generate an engaging, reporter-style weather briefing.\n"
+         "6. Read the 'RAW STOCK DATA' and generate a brief, conversational market overview discussing the broader indices and how the specific watchlist stocks moved. Do not list out all the numbers mechanically; tell the story of the market day."
         ),
         ("human", "Process these stories:\n\n{context}")
     ])
@@ -104,6 +123,20 @@ async def run_master_pipeline():
         # One single API call processes everything!
         result = await chain.ainvoke({"context": context_block})
         
+        # Extract the new weather section
+        if result.weather_report:
+            final_frontend_data["weather"].append({
+                "summary": result.weather_report,
+                "url": "#"
+            })
+            
+        # Extract the new finance section
+        if result.market_overview and raw_stock_data:
+            final_frontend_data["finance"] = {
+                "overview": result.market_overview,
+                "stocks": raw_stock_data
+            }
+            
         # Unpack the single massive list back into the correct sections
         for item in result.items:
             if item.id in url_mapping:
