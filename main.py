@@ -1,0 +1,134 @@
+import json
+import os
+import asyncio
+from typing import List
+from dotenv import load_dotenv
+from pydantic import BaseModel, Field
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_core.prompts import ChatPromptTemplate
+
+from news_google import build_daily_news_context
+
+
+
+# --- CONFIGURATION ---
+INPUT_FILE = "daily_news_context_rss.json"
+OUTPUT_FILE = "frontend_briefing.json"
+
+# 1. DEFINE THE STRUCTURE GEMINI MUST RETURN
+class ArticleSummary(BaseModel):
+    id: str = Field(description="The exact temporary ID passed in the context.")
+    summary: str = Field(description="The hyper-dense, detailed summary with bolded entities.")
+
+class MasterBriefing(BaseModel):
+    items: List[ArticleSummary]
+
+
+async def run_master_pipeline():
+    load_dotenv()
+    if not os.getenv("GOOGLE_API_KEY"):
+        raise ValueError("❌ GOOGLE_API_KEY not found! Check your .env file.")
+
+    # -----------------------------------------------------------------
+    # PHASE 1: REFRESH RSS DATA
+    # -----------------------------------------------------------------
+    print("=== PHASE 1: FETCHING LIVE RSS FEEDS FROM GOOGLE ===")
+    await build_daily_news_context()
+    print("====================================================\n")
+
+    # -----------------------------------------------------------------
+    # PHASE 2: GENERATE THE AI BRIEFING (SINGLE BATCH)
+    # -----------------------------------------------------------------
+    print("=== PHASE 2: GENERATING STRUCTURAL BRIEFING FROM NEW CONTEXT ===")
+    
+    try:
+        with open(INPUT_FILE, "r", encoding="utf-8") as f:
+            raw_data = json.load(f)
+    except Exception as e:
+        print(f"❌ Error reading newly generated JSON: {e}")
+        return
+
+    sections = [
+        "international_news", "domestic_news", "business_news", 
+        "technology_news", "sports_news", "user_interest"
+    ]
+
+    # Initialize the mapping dictionaries
+    url_mapping = {}
+    context_lines = []
+    final_frontend_data = {sec: [] for sec in sections}
+
+    print("Packing all 6 sections into a single context block...")
+
+    # Build ONE massive context block containing all articles from all sections
+    for section in sections:
+        articles = raw_data.get(section, [])
+        for index, article in enumerate(articles):
+            temp_id = f"{section}_{index}"
+            
+            # Store both the URL and the Section so we can unpack it later
+            url_mapping[temp_id] = {
+                "url": article.get("url"),
+                "section": section
+            }
+            
+            desc = article.get("description", "")
+            title = article.get("title", "")
+            context_lines.append(f"ID: {temp_id}\nContext: {title} - {desc}\n")
+
+    context_block = "\n".join(context_lines)
+
+    #Setup Gemini
+    llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.2)
+    
+    
+    structured_llm = llm.with_structured_output(MasterBriefing)
+
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", 
+         "You are an elite, data-driven editor compiling a morning intelligence brief.\n"
+         "RULES:\n"
+         "1. For each provided article ID, write a comprehensive, high-density summary.\n"
+         "2. Every summary must be hyper-dense, capturing specific scores, player names, company names, and numbers from the context.\n"
+         "3. Bold all key names, teams, and numbers for instant scanning.\n"
+         "4. Do NOT use conversational transitions."
+        ),
+        ("human", "Process these stories:\n\n{context}")
+    ])
+
+    chain = prompt | structured_llm
+
+    print("🚀 Sending ONE unified batch request to Gemini API (Bypassing Rate Limits)...")
+
+    try:
+        # One single API call processes everything!
+        result = await chain.ainvoke({"context": context_block})
+        
+        # Unpack the single massive list back into the correct sections
+        for item in result.items:
+            if item.id in url_mapping:
+                sec = url_mapping[item.id]["section"]
+                final_frontend_data[sec].append({
+                    "summary": item.summary,
+                    "url": url_mapping[item.id]["url"]
+                })
+
+        # Remove any empty sections if a feed failed
+        final_frontend_data = {k: v for k, v in final_frontend_data.items() if v}
+
+    except Exception as e:
+        print(f"❌ Error during batch generation: {e}")
+        return
+
+    # Save final frontend-optimized configuration
+    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
+        json.dump(final_frontend_data, f, ensure_ascii=False, indent=2)
+
+    print("\n====================================================")
+    print(f"🏆 SUCCESS! Master execution complete.")
+    print(f"   Frontend-ready data successfully built at '{OUTPUT_FILE}'")
+    print("====================================================")
+
+
+if __name__ == "__main__":
+    asyncio.run(run_master_pipeline())
