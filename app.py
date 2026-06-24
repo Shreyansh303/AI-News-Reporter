@@ -8,7 +8,6 @@ from main import run_master_pipeline
 
 # --- 1. APP CONFIGURATION & STYLING ---
 tailwind_script = Script(src="https://cdn.tailwindcss.com")
-# We explicitly tell tailwind to look for the 'dark' class on the HTML wrapper
 tailwind_config = Script("""
     tailwind.config = {
       darkMode: 'class',
@@ -17,6 +16,9 @@ tailwind_config = Script("""
 
 custom_css = Style("""
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&display=swap');
+    
+    /* Enable smooth scrolling across the entire page */
+    html { scroll-behavior: smooth; }
     body { font-family: 'Inter', sans-serif; }
     
     .htmx-indicator { display: none; }
@@ -28,7 +30,6 @@ custom_css = Style("""
     .dark strong { color: #ffffff; }
 """)
 
-# We pass htmlkw={'class': 'dark'} to ensure the page boots into dark mode by default
 app, rt = fast_app(
     pico=False,
     htmlkw={'class': 'dark'},
@@ -42,6 +43,34 @@ def load_news_data():
             return json.load(f)
     except FileNotFoundError:
         return {}
+
+def Sidebar(sections):
+    """Generates the slide-out navigation menu with dynamic section links."""
+    links = [
+        Li(A(title, href=f"#{anchor}", onclick="document.getElementById('sidebar').classList.add('translate-x-full')", cls="block text-neutral-600 dark:text-neutral-400 hover:text-black dark:hover:text-white font-semibold transition-colors text-lg"))
+        for title, anchor in sections
+    ]
+    
+    return Div(
+        # The Sidebar Drawer
+        Div(
+            Div(
+                H2("Navigation", cls="text-2xl font-black text-neutral-900 dark:text-white tracking-tight"),
+                Button("✕", onclick="document.getElementById('sidebar').classList.add('translate-x-full')", cls="text-neutral-500 hover:text-black dark:hover:text-white text-xl font-bold transition-colors"),
+                cls="flex justify-between items-center mb-8 pb-4 border-b border-neutral-200 dark:border-neutral-800"
+            ),
+            Ul(*links, cls="space-y-4"),
+            id="sidebar",
+            cls="fixed inset-y-0 right-0 transform translate-x-full transition-transform duration-300 ease-in-out z-50 w-72 bg-white/95 dark:bg-[#0a0a0a]/95 backdrop-blur-xl border-l border-neutral-200 dark:border-neutral-800 shadow-2xl p-8 overflow-y-auto"
+        ),
+        
+        # The Toggle Button
+        Button(
+            "☰",
+            onclick="document.getElementById('sidebar').classList.remove('translate-x-full')",
+            cls="fixed top-6 right-6 lg:top-8 lg:right-8 bg-neutral-900 dark:bg-neutral-800 text-white px-5 py-3 rounded-xl shadow-2xl z-40 hover:bg-neutral-800 dark:hover:bg-neutral-700 transition-all border border-neutral-700 dark:border-neutral-600 text-lg font-bold"
+        )
+    )
 
 def NewsCard(article):
     html_summary = markdown.markdown(article.get('summary', ''))
@@ -57,7 +86,6 @@ def NewsCard(article):
     
     return Div(
         *elements,
-        # Replaced custom .glass-panel CSS class with dynamic tailwind equivalents
         cls="bg-white/60 dark:bg-[#171717]/40 backdrop-blur-xl border border-neutral-200/60 dark:border-[#404040]/50 p-6 rounded-2xl hover:bg-white/80 dark:hover:bg-neutral-800/60 hover:border-neutral-300 dark:hover:border-neutral-600/50 transition-all duration-300 flex flex-col md:flex-row items-start md:items-center transform hover:-translate-y-1 shadow-lg hover:shadow-2xl"
     )
 
@@ -67,7 +95,6 @@ def SectionGrid(section_title, articles):
     
     cards = [NewsCard(a) for a in articles]
     
-    # Map internal JSON keys to highly professional UI headers
     title_mapping = {
         "user_interest": "Curated Intelligence",
         "domestic_news": "National Affairs",
@@ -78,13 +105,15 @@ def SectionGrid(section_title, articles):
     }
     
     formatted_title = title_mapping.get(section_title, section_title.replace("_", " ").title())
+    anchor_id = formatted_title.lower().replace(" ", "-").replace("&", "and")
     
     title_cls = "text-3xl font-extrabold text-neutral-900 dark:text-neutral-100 mb-6 border-b border-neutral-200 dark:border-neutral-800/60 pb-3 tracking-tight transition-colors"
         
     return Div(
         H2(formatted_title, cls=title_cls),
         Div(*cards, cls="flex flex-col space-y-4"),
-        cls="mb-16"
+        id=anchor_id,
+        cls="mb-16 scroll-mt-12"
     )
 
 def FinanceSection(finance_data):
@@ -103,7 +132,6 @@ def FinanceSection(finance_data):
         hi = s.get('wk52_high')
         lo = s.get('wk52_low')
         
-        # Kept the green/red strictly for the percentage indicators for readability, but lightened them for light mode
         color_cls = "text-green-700 dark:text-green-400" if chg >= 0 else "text-red-700 dark:text-red-400"
         bg_color_cls = "bg-green-100 dark:bg-green-900/30 border-green-200 dark:border-green-800/50" if chg >= 0 else "bg-red-100 dark:bg-red-900/30 border-red-200 dark:border-red-800/50"
         sign = "+" if chg >= 0 else ""
@@ -131,31 +159,52 @@ def FinanceSection(finance_data):
         H2("Market Intelligence", cls="text-3xl font-extrabold text-neutral-900 dark:text-neutral-100 mb-6 border-b border-neutral-200 dark:border-neutral-800/60 pb-3 tracking-tight transition-colors"),
         Div(NotStr(overview), cls="text-neutral-700 dark:text-neutral-300 text-lg leading-relaxed mb-8 p-6 rounded-2xl border border-neutral-200 dark:border-neutral-700/40 bg-neutral-100/50 dark:bg-neutral-800/30 shadow-inner transition-colors"),
         Div(*stock_cards, cls="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-5"),
-        cls="mb-16"
+        id="market-intelligence",
+        cls="mb-16 scroll-mt-12"
     )
 
 def NewsFeed():
     data = load_news_data()
     sections = []
+    nav_links = []
     
     if "finance" in data:
+        nav_links.append(("Market Intelligence", "market-intelligence"))
         sections.append(FinanceSection(data["finance"]))
         
     if "weather" in data:
+        nav_links.append(("Weather", "weather"))
         sections.append(SectionGrid("weather", data["weather"]))
         
+    title_mapping = {
+        "user_interest": "Curated Intelligence",
+        "domestic_news": "National Affairs",
+        "international_news": "Global Affairs",
+        "business_news": "Business & Economy",
+        "technology_news": "Technology & Innovation",
+        "sports_news": "Sports & Athletics"
+    }
+    
     for title, articles in data.items():
         if title in ["finance", "weather"]:
             continue
+            
+        formatted_title = title_mapping.get(title, title.replace("_", " ").title())
+        anchor_id = formatted_title.lower().replace(" ", "-").replace("&", "and")
+        nav_links.append((formatted_title, anchor_id))
+        
         sections.append(SectionGrid(title, articles))
         
-    return Div(*sections, id="news-feed")
+    return Div(
+        Sidebar(nav_links),
+        Div(*sections), 
+        id="news-feed"
+    )
 
 # --- 3. SERVER ROUTES ---
 @rt('/')
 def get():
     return Titled("",
-        # The main wrapper sets the bg and text for the entire page
         Div(
             # Header Section
             Div(
@@ -190,13 +239,11 @@ def get():
                 cls="flex flex-col md:flex-row justify-between items-start md:items-end mb-16 pb-8 border-b border-neutral-200 dark:border-neutral-800/80 transition-colors"
             ),
             
-            # The actual news content
+            # The actual news content (includes Sidebar)
             NewsFeed(),
             
-            # Inner Container
             cls="max-w-7xl mx-auto px-4 sm:px-6 py-12"
         ),
-        # Root Wrapper for global bg and text colors. This applies the Light/Dark mode transitions globally!
         cls="bg-[#fafafa] dark:bg-[#0a0a0a] min-h-screen text-neutral-900 dark:text-[#f5f5f5] transition-colors duration-300"
     )
 
