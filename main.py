@@ -112,9 +112,9 @@ async def run_master_pipeline():
          "1. For each provided article ID, write a comprehensive, high-density summary.\n"
          "2. Every summary must be hyper-dense, capturing specific scores, player names, company names, and numbers from the context.\n"
          "3. Bold all key names, teams, and numbers for instant scanning.\n"
-         "4. Do NOT use conversational transitions.\n"
+         "4. Do NOT use conversational transitions. Do NOT include the name of the news publisher or source (e.g., 'according to NDTV', 'Reuters reports').\n"
          "5. Read the 'RAW WEATHER DATA' and generate an engaging, reporter-style weather briefing.\n"
-         "6. Read the 'RAW STOCK DATA' and generate a brief, conversational market overview discussing the broader indices and how the specific watchlist stocks moved. Do not list out all the numbers mechanically; tell the story of the market day.\n"
+         "6. Read the 'RAW STOCK DATA' and generate a brief, conversational market overview discussing the broader indices and how the specific watchlist stocks moved. Also include a very brief, general mention of the overall global market sentiment today.\n"
          "7. CRITICAL FORMATTING: You MUST explicitly bold (using **asterisks**) the names of ALL indices, ALL stock tickers/companies, and ALL numbers/percentages you mention in the market overview."
         ),
         ("human", "Process these stories:\n\n{context}")
